@@ -1,90 +1,86 @@
-const axios = require('axios');
-const fs = require('fs-extra');
-const path = require('path');
-const threadsFile = path.join(__dirname, "sim_threads.json");
+const axios = require("axios");
+const fs = require("fs");
 
-// Load active threads from file
-function loadActiveThreads() {
-  try {
-    const data = fs.readFileSync(threadsFile, "utf8");
-    const arr = JSON.parse(data);
-    return new Set(arr);
-  } catch (e) {
-    return new Set();
-  }
+const SIM_API_KEY = "2423ba2ac91a4f6fbd39b9b47c744fe0fbf4d219";
+const DATA_FILE = "./simData.json";
+
+// load data
+let simData = fs.existsSync(DATA_FILE)
+  ? JSON.parse(fs.readFileSync(DATA_FILE))
+  : {};
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(simData, null, 2));
 }
 
-// Save active threads to file
-function saveActiveThreads(set) {
-  fs.writeFileSync(threadsFile, JSON.stringify(Array.from(set)), "utf8");
-}
-
-let activeSimThreads = loadActiveThreads();
-
-module.exports.config = {
-  name: "simv3",
-  version: "3.0.0",
-  permission: 0,
-  credits: "Nax",
-  prefix: false,
-  premium: false,
-  description: "Auto-reply with SimSimi AI, stays on until turned off (persistent)",
-  category: "without prefix",
-  usages: "sim on | sim off",
-  cooldowns: 3,
-  dependencies: {
-    "axios": ""
-  }
-};
-
-module.exports.languages = {
-  "english": {
-    "on": "SimSimi auto-reply activated! All messages will receive SimSimi responses.",
-    "off": "SimSimi auto-reply deactivated.",
-    "alreadyOn": "SimSimi auto-reply is already active in this thread.",
-    "alreadyOff": "SimSimi auto-reply is not active in this thread.",
-    "apiError": "Error: Failed to connect to Sim API.",
-    "noResponse": "Error: No response from Sim API."
-  }
-};
-
-module.exports.handleEvent = async function({ api, event }) {
-  const { threadID, body, senderID } = event;
-  if (!activeSimThreads.has(threadID)) return;
-  if (!body || senderID === api.getCurrentUserID()) return;
-
+module.exports = async function ({ api, event }) {
   try {
-    const apiKey = "2a5a2264d2ee4f0b847cb8bd809ed34bc3309be7";
-    const apiUrl = `https://simsimi.ooguy.com/sim?query=${encodeURIComponent(body)}&apikey=${apiKey}`;
-    const { data } = await axios.get(apiUrl);
-    if (!data || !data.respond) return;
-    api.sendMessage(data.respond, threadID, event.messageID);
-  } catch (error) {
-    console.error("sim handleEvent error:", error.message);
-  }
-};
+    if (!event.body) return;
+    if (event.senderID === api.getCurrentUserID()) return;
 
-module.exports.run = async function({ api, event, args, getText }) {
-  const { threadID, messageID } = event;
-  const subcmd = (args[0] || "").toLowerCase();
+    const threadID = event.threadID;
+    const text = event.body.trim();
+    const lower = text.toLowerCase();
 
-  if (subcmd === "on") {
-    if (activeSimThreads.has(threadID)) {
-      return api.sendMessage(getText("alreadyOn"), threadID, messageID);
+    // init thread data
+    if (!simData[threadID]) {
+      simData[threadID] = { enabled: false };
+      saveData();
     }
-    activeSimThreads.add(threadID);
-    saveActiveThreads(activeSimThreads);
-    return api.sendMessage(getText("on"), threadID, messageID);
-  }
 
-  if (subcmd === "off") {
-    if (!activeSimThreads.has(threadID)) {
-      return api.sendMessage(getText("alreadyOff"), threadID, messageID);
+    /* ========= SIM ON ========= */
+    if (lower === "sim on") {
+      simData[threadID].enabled = true;
+      saveData();
+      return api.sendMessage(
+`🤖 SIM
+━━━━━━━━━━━━━━
+✅ SIM AI is now ON
+Sabihin mo lang: sim <message>`,
+        threadID
+      );
     }
-    activeSimThreads.delete(threadID);
-    saveActiveThreads(activeSimThreads);
-    return api.sendMessage(getText("off"), threadID, messageID);
-  }
 
-  return api.sendMessage("📌 Usage:\nsim on — activate SimSimi auto-reply\nsim off — deactivate auto-reply", threadID, messageID);
+    /* ========= SIM OFF ========= */
+    if (lower === "sim off") {
+      simData[threadID].enabled = false;
+      saveData();
+      return api.sendMessage(
+`🤖 SIM
+━━━━━━━━━━━━━━
+⛔ SIM AI is now OFF`,
+        threadID
+      );
+    }
+
+    // kung off, wag gumalaw
+    if (!simData[threadID].enabled) return;
+
+    // kailangan "sim" sa umpisa
+    if (!lower.startsWith("sim")) return;
+
+    const message = text.slice(3).trim();
+    if (!message) return;
+
+    const res = await axios.get("https://simsimi.ooguy.com/talk", {
+      params: {
+        text: message,
+        apikey: SIM_API_KEY
+      },
+      timeout: 15000
+    });
+
+    const reply = res.data?.answer;
+    if (!reply) return;
+
+    api.sendMessage(
+`🤖 SIM
+━━━━━━━━━━━━━━
+${reply}`,
+      threadID
+    );
+
+  } catch (err) {
+    console.error("SIM ERROR:", err.message);
+  }
 };
